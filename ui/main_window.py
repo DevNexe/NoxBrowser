@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from qframelesswindow import FramelessWindow
 
+from ui.tab_bar import TabBar, CustomTabBar
 from core.bookmarks import BookmarkManager
 from core.browser_widget import BrowserWidget
 from core.history import HistoryManager
@@ -68,24 +69,6 @@ class EdgeGrip(QWidget):
                 event.accept()
                 return
         super().mousePressEvent(event)
-
-
-class ChromeLikeTabBar(QTabBar):
-    """Tab bar width behavior similar to Chrome."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._tab_min_width = 46
-        self._tab_max_width = 240
-
-    def tabSizeHint(self, index: int) -> QSize:  # noqa: N802
-        size = super().tabSizeHint(index)
-        count = max(1, self.count())
-        available = max(1, self.width() - 8)
-        target = min(self._tab_max_width, max(self._tab_min_width, available // count))
-        size.setWidth(target)
-        return size
-
 
 class NoxTitleBar(QWidget):
     """Custom title bar using the same movement model as NoxIDE."""
@@ -153,17 +136,22 @@ class NoxTitleBar(QWidget):
             QTabBar {
                 background: transparent;
                 border: none;
+                border-bottom: none;
             }
             QTabBar::tab {
                 background: #2d2e30;
                 color: #9aa0a6;
-                padding: 5px 10px;
+                padding: 0px 10px;
                 min-width: 46px;
                 max-width: 240px;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
                 margin-right: 2px;
-                margin-top: 4px;
+                margin-top: 0px;
+                height: 34px;
+                line-height: 34px;
+                text-align: left;
+                padding-left: 12px;
             }
             QTabBar::tab:selected {
                 background: #35363a;
@@ -192,17 +180,18 @@ class NoxTitleBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.tabs_bar = ChromeLikeTabBar(self)
+        self.tabs_bar = CustomTabBar(self)
+        self.tabs_bar.close_clicked.connect(self._on_title_tab_closed)
+        self.tabs_bar.tab_detach_requested.connect(self._on_title_tab_detach)
+        self.tabs_bar.tabMoved.connect(self._on_title_tab_moved)
         self.tabs_bar.setDocumentMode(True)
         self.tabs_bar.setMovable(True)
-        self.tabs_bar.setTabsClosable(True)
         self.tabs_bar.setExpanding(False)
         self.tabs_bar.setUsesScrollButtons(True)
         self.tabs_bar.setDrawBase(False)
         self.tabs_bar.setElideMode(Qt.ElideRight)
         self.tabs_bar.installEventFilter(self)
         self.tabs_bar.currentChanged.connect(self._on_title_tab_changed)
-        self.tabs_bar.tabCloseRequested.connect(self._on_title_tab_closed)
         layout.addWidget(self.tabs_bar, 1)
 
         self.new_tab_btn = QPushButton(MaterialIcon.ADD, self)
@@ -235,6 +224,19 @@ class NoxTitleBar(QWidget):
         self._tabs_controller.tabs_updated.connect(self._refresh_tabs_from_controller)
         self._refresh_tabs_from_controller()
 
+    def _on_title_tab_detach(self, index: int, global_pos: QPoint) -> None:
+        if not self._tabs_controller:
+            return
+        self._tabs_controller.detach_tab(index, global_pos)
+
+    def _on_title_tab_moved(self, from_index: int, to_index: int) -> None:
+        if self._syncing_tabs or not self._tabs_controller:
+            return
+        self._tabs_controller._syncing_move = True
+        self._tabs_controller._tabs.tabBar().moveTab(from_index, to_index)
+        self._tabs_controller._syncing_move = False
+        QTimer.singleShot(0, self._tabs_controller._sync_all_icons)
+
     def _refresh_tabs_from_controller(self) -> None:
         if not self._tabs_controller:
             return
@@ -263,13 +265,14 @@ class NoxTitleBar(QWidget):
             return
         self._tabs_controller.new_tab_requested.emit("")
 
-    def eventFilter(self, obj, event):  # noqa: N802
-        # Allow dragging window from empty area of tab strip.
+    def eventFilter(self, obj, event):
         if obj is self.tabs_bar and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and self.window().windowHandle():
                 if self.tabs_bar.tabAt(event.pos()) == -1:
                     self.window().windowHandle().startSystemMove()
                     return True
+                # если курсор над вкладкой — не перехватываем, даём Qt обработать drag
+                return False
         return super().eventFilter(obj, event)
 
     def toggle_maximize(self) -> None:
@@ -551,6 +554,7 @@ class MainWindow(FramelessWindow):
         self._tab_bar.new_tab_requested.connect(self.open_new_tab)
         self._tab_bar.set_tab_header_visible(False)
         self.custom_title_bar.bind_tabs(self._tab_bar)
+        self._tab_bar.register_external_tab_bar(self.custom_title_bar.tabs_bar)
         layout.addWidget(self._tab_bar)
 
         self.setContentWidget(container)

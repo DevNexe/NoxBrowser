@@ -16,6 +16,7 @@ _required_chromium_flags = [
     "--disable-es3-gl-context",
     "--disable-vulkan",
     "--ignore-gpu-blocklist",
+    "--process-per-site",
 ]
 _blocked_exact = {
     "--disable-gpu",

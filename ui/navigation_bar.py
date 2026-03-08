@@ -23,7 +23,7 @@ class MaterialIcon:
     ARROW_FORWARD = "\ue5c8"
     REFRESH = "\ue5d5"
     # use same fallback as tab bar in case the font glyph is missing
-    CLOSE = "✕"
+    CLOSE = "\ue5cd"
     LOCK = "\ue897"
     LOCK_OPEN = "\ue898"
     STAR = "\ue838"

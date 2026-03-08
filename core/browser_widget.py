@@ -51,6 +51,7 @@ class BrowserWidget(QWidget):
     loading_state_changed = Signal(bool)
     load_progress = Signal(int)
     new_window_requested = Signal(str)
+    icon_changed = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -151,6 +152,7 @@ class BrowserWidget(QWidget):
         layout.addWidget(self._view)
 
     def _connect_signals(self) -> None:
+        self._view.iconChanged.connect(self.icon_changed.emit)
         self._view.urlChanged.connect(self._on_view_url_changed)
         self._view.titleChanged.connect(self.title_changed.emit)
         self._view.loadStarted.connect(lambda: self.loading_state_changed.emit(True))
