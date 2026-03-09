@@ -303,6 +303,12 @@ class MainWindow(FramelessWindow):
         self._dwm_update_timer.setSingleShot(True)
         self._dwm_update_timer.timeout.connect(self._apply_windows_dwm_preferences)
 
+        self._hover_check_timer = QTimer(self)
+        self._hover_check_timer.setInterval(50)
+        self._hover_check_timer.timeout.connect(self._check_maximize_hover)
+        if sys.platform == "win32":
+            self._hover_check_timer.start()
+
         self._history = HistoryManager()
         self._bookmarks = BookmarkManager()
         from core.downloads import DownloadManager
@@ -314,6 +320,7 @@ class MainWindow(FramelessWindow):
         self._setup_ui()
         self._init_resize_grips()
         self._setup_shortcuts()
+        QTimer.singleShot(0, self._update_minimum_height)
 
         self._plugin_manager.load_all()
         logger.info("NoxBrowser started")
@@ -344,7 +351,6 @@ class MainWindow(FramelessWindow):
     def _setup_window(self) -> None:
         self.setWindowTitle("NoxBrowser")
         self.setMinimumWidth(500)
-        self.setMinimumHeight(35)
         self.resize(1280, 800)
         old_title_bar = getattr(self, "titleBar", None)
         if old_title_bar is not None:
@@ -365,6 +371,23 @@ class MainWindow(FramelessWindow):
         if sys.platform == "win32":
             self._apply_windows_dwm_preferences()
             QTimer.singleShot(0, self._enable_native_snap_styles)
+
+    def _update_minimum_height(self) -> None:
+        title_h = self.custom_title_bar.height() if hasattr(self, "custom_title_bar") else 34
+        nav_h = self._nav_bar.sizeHint().height() if hasattr(self, "_nav_bar") else 46
+        self.setMinimumHeight(title_h + 1 + nav_h)
+
+    def _check_maximize_hover(self) -> None:
+        btn = getattr(self.custom_title_bar, "maximize_btn", None)
+        if btn is None:
+            return
+        top_left = btn.mapToGlobal(QPoint(0, 0))
+        rect = QRect(top_left, btn.size())
+        hovered = rect.contains(QCursor.pos())
+        if btn.property("hover") != hovered:
+            btn.setProperty("hover", hovered)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _apply_windows_dwm_preferences(self) -> None:
         if sys.platform != "win32":
@@ -653,11 +676,15 @@ class MainWindow(FramelessWindow):
         self._update_resize_grips()
         if sys.platform == "win32":
             self._dwm_update_timer.start(30)
-        if hasattr(self, "_tab_bar"):
-            if self.height() < 50:
-                self._tab_bar.setMaximumHeight(0)
-            else:
-                self._tab_bar.setMaximumHeight(16777215)
+        self._clamp_tab_bar_height()
+
+    def _clamp_tab_bar_height(self) -> None:
+        if not hasattr(self, "_tab_bar") or not hasattr(self, "_nav_bar"):
+            return
+        title_h = self.custom_title_bar.height() if hasattr(self, "custom_title_bar") else 34
+        nav_h = self._nav_bar.sizeHint().height()
+        available = self.height() - title_h - 1 - nav_h
+        self._tab_bar.setMaximumHeight(max(0, available))
 
     def moveEvent(self, event) -> None:  # noqa: N802
         super().moveEvent(event)
