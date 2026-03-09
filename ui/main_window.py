@@ -39,12 +39,10 @@ class MaterialIcon:
     MINIMIZE = "\ue15b"
     MAXIMIZE = "\ue3c6"
     RESTORE = "\uf4c8"
-    CLOSE = "\ue5cd"  # use simple cross as fallback
+    CLOSE = "\ue5cd"
 
 
 class EdgeGrip(QWidget):
-    """Invisible resize handle that delegates to OS-level system resize."""
-
     def __init__(self, parent: QWidget, edges: Qt.Edges) -> None:
         super().__init__(parent)
         self._edges = edges
@@ -70,9 +68,8 @@ class EdgeGrip(QWidget):
                 return
         super().mousePressEvent(event)
 
-class NoxTitleBar(QWidget):
-    """Custom title bar using the same movement model as NoxIDE."""
 
+class NoxTitleBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedHeight(34)
@@ -87,21 +84,17 @@ class NoxTitleBar(QWidget):
                 background-color: #202124;
                 border-bottom: 1px solid #404040;
             }
-            #titleLabel {
-                color: #e8eaed;
-                font-size: 12px;
-                padding-left: 10px;
-            }
             QPushButton {
                 background: transparent;
                 border: none;
                 color: #e8eaed;
-                min-width: 34px;
-                max-width: 34px;
-                min-height: 34px;
-                max-height: 34px;
+                min-width: 26px;
+                max-width: 26px;
+                min-height: 26px;
+                max-height: 26px;
                 border-radius: 8px;
                 font-size: 13px;
+                margin: 4px 4px;
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.1);
@@ -110,26 +103,24 @@ class NoxTitleBar(QWidget):
             QPushButton:pressed {
                 background-color: rgba(255, 255, 255, 0.15);
             }
-            QPushButton#closeBtn:hover {
-                background-color: #f1707a;
-            }
-            QPushButton#closeBtn:pressed {
-                background-color: #f1707a;
-            }
-            QPushButton#maximizeBtn:hover {
+            QPushButton#closeBtn:hover { background-color: #f1707a; }
+            QPushButton#closeBtn:pressed { background-color: #f1707a; }
+            QPushButton#maximizeBtn:hover,
+            QPushButton#maximizeBtn[hover="true"] {
                 background-color: rgba(255, 255, 255, 0.18);
                 color: #ffffff;
+                border-radius: 8px;
             }
             QPushButton#maximizeBtn:pressed {
                 background-color: rgba(255, 255, 255, 0.26);
+                border-radius: 8px;
             }
-            QPushButton#maximizeBtn{
+            QPushButton#maximizeBtn {
                 font-family: "Material Symbols Rounded";
                 font-size: 16px;
             }
             QPushButton#minimizeBtn,
-            QPushButton#closeBtn,
-            QPushButton#newTabBtn {
+            QPushButton#closeBtn {
                 font-family: "Material Symbols Rounded";
                 font-size: 20px;
             }
@@ -139,7 +130,7 @@ class NoxTitleBar(QWidget):
                 border-bottom: none;
             }
             QTabBar::tab {
-                background: #2d2e30;
+                background: #202124;
                 color: #9aa0a6;
                 padding: 0px 10px;
                 min-width: 46px;
@@ -153,26 +144,12 @@ class NoxTitleBar(QWidget):
                 text-align: left;
                 padding-left: 12px;
             }
-            QTabBar::tab:selected {
-                background: #35363a;
-                color: #e8eaed;
-            }
+            QTabBar::tab:selected { background: #35363a; color: #e8eaed; }
             QTabBar::tab:hover:!selected {
-                background: #202124;
+                background: #2d2e30;
                 color: #e8eaed;
             }
-            QTabBar::close-button {
-                subcontrol-position: right;
-            }
-            QPushButton#newTabBtn {
-                min-width: 30px;
-                max-width: 30px;
-                min-height: 30px;
-                max-height: 30px;
-                margin-top: 3px;
-                border-radius: 8px;
-                font-size: 18px;
-            }
+            QTabBar::close-button { subcontrol-position: right; }
             """
         )
 
@@ -184,6 +161,7 @@ class NoxTitleBar(QWidget):
         self.tabs_bar.close_clicked.connect(self._on_title_tab_closed)
         self.tabs_bar.tab_detach_requested.connect(self._on_title_tab_detach)
         self.tabs_bar.tabMoved.connect(self._on_title_tab_moved)
+        self.tabs_bar.new_tab_clicked.connect(self._on_title_new_tab)
         self.tabs_bar.setDocumentMode(True)
         self.tabs_bar.setMovable(True)
         self.tabs_bar.setExpanding(False)
@@ -193,13 +171,6 @@ class NoxTitleBar(QWidget):
         self.tabs_bar.installEventFilter(self)
         self.tabs_bar.currentChanged.connect(self._on_title_tab_changed)
         layout.addWidget(self.tabs_bar, 1)
-
-        self.new_tab_btn = QPushButton(MaterialIcon.ADD, self)
-        self.new_tab_btn.setObjectName("newTabBtn")
-        self.new_tab_btn.setToolTip("New tab (Ctrl+T)")
-        self.new_tab_btn.setFont(QFont("Material Symbols Rounded", 16))
-        self.new_tab_btn.clicked.connect(self._on_title_new_tab)
-        layout.addWidget(self.new_tab_btn)
 
         self.minimize_btn = QPushButton(MaterialIcon.MINIMIZE, self)
         self.maximize_btn = QPushButton(MaterialIcon.MAXIMIZE, self)
@@ -223,6 +194,8 @@ class NoxTitleBar(QWidget):
         self._tabs_controller = tabs_controller
         self._tabs_controller.tabs_updated.connect(self._refresh_tabs_from_controller)
         self._refresh_tabs_from_controller()
+        # устанавливаем фейковую вкладку + после первичной синхронизации
+        QTimer.singleShot(0, self.tabs_bar.install_add_tab)
 
     def _on_title_tab_detach(self, index: int, global_pos: QPoint) -> None:
         if not self._tabs_controller:
@@ -231,6 +204,10 @@ class NoxTitleBar(QWidget):
 
     def _on_title_tab_moved(self, from_index: int, to_index: int) -> None:
         if self._syncing_tabs or not self._tabs_controller:
+            return
+        # не синкаем перемещение фейковой вкладки +
+        add_idx = self.tabs_bar._add_index()
+        if from_index == add_idx or to_index == add_idx:
             return
         self._tabs_controller._syncing_move = True
         self._tabs_controller._tabs.tabBar().moveTab(from_index, to_index)
@@ -242,16 +219,27 @@ class NoxTitleBar(QWidget):
             return
         self._syncing_tabs = True
         self.tabs_bar.blockSignals(True)
-        while self.tabs_bar.count() > 0:
-            self.tabs_bar.removeTab(0)
+
+        # удаляем все реальные вкладки (не +)
+        add_idx = self.tabs_bar._add_index()
+        # удаляем с конца чтобы не сбивать индексы
+        indices = list(range(self.tabs_bar.count()))
+        for i in reversed(indices):
+            if i != add_idx:
+                self.tabs_bar.removeTab(i)
+
         for i in range(self._tabs_controller.tab_count()):
-            self.tabs_bar.addTab(self._tabs_controller.tab_title(i))
+            self.tabs_bar.insertTab(i, self._tabs_controller.tab_title(i))
+
         self.tabs_bar.setCurrentIndex(self._tabs_controller.current_index())
         self.tabs_bar.blockSignals(False)
         self._syncing_tabs = False
 
     def _on_title_tab_changed(self, index: int) -> None:
         if self._syncing_tabs or not self._tabs_controller:
+            return
+        # игнорируем выбор фейковой вкладки +
+        if self.tabs_bar._has_add_tab and index == self.tabs_bar._add_index():
             return
         self._tabs_controller.set_current_index(index)
 
@@ -271,7 +259,6 @@ class NoxTitleBar(QWidget):
                 if self.tabs_bar.tabAt(event.pos()) == -1:
                     self.window().windowHandle().startSystemMove()
                     return True
-                # если курсор над вкладкой — не перехватываем, даём Qt обработать drag
                 return False
         return super().eventFilter(obj, event)
 
@@ -280,7 +267,6 @@ class NoxTitleBar(QWidget):
         if sys.platform == "win32":
             try:
                 import ctypes
-
                 hwnd = int(win.winId())
                 SW_MAXIMIZE = 3
                 SW_RESTORE = 9
@@ -309,8 +295,6 @@ class NoxTitleBar(QWidget):
 
 
 class MainWindow(FramelessWindow):
-    """Main browser window with frameless shell and custom title bar."""
-
     def __init__(self) -> None:
         super().__init__()
         self._native_snap_styles_applied = False
@@ -323,7 +307,6 @@ class MainWindow(FramelessWindow):
         self._bookmarks = BookmarkManager()
         from core.downloads import DownloadManager
         self._downloads = DownloadManager()
-        # show download progress in navigation bar
         self._downloads.downloadUpdated.connect(lambda e: self._nav_bar.set_download_progress(e.progress))
         self._plugin_manager = PluginManager(browser_window=self)
 
@@ -361,7 +344,7 @@ class MainWindow(FramelessWindow):
     def _setup_window(self) -> None:
         self.setWindowTitle("NoxBrowser")
         self.setMinimumWidth(500)
-        self.setMinimumHeight(600)
+        self.setMinimumHeight(35)
         self.resize(1280, 800)
         old_title_bar = getattr(self, "titleBar", None)
         if old_title_bar is not None:
@@ -381,43 +364,22 @@ class MainWindow(FramelessWindow):
                 pass
         if sys.platform == "win32":
             self._apply_windows_dwm_preferences()
-
-            # Apply after the window is created and shown.
             QTimer.singleShot(0, self._enable_native_snap_styles)
 
     def _apply_windows_dwm_preferences(self) -> None:
-        """Apply Windows DWM attributes (dark caption + rounded corners)."""
         if sys.platform != "win32":
             return
         try:
             import ctypes
-
             hwnd = int(self.winId())
             dwmapi = ctypes.windll.dwmapi
-
-            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
             dark_mode = ctypes.c_int(1)
-            dwmapi.DwmSetWindowAttribute(
-                hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode)
-            )
-
-            # DWMWA_WINDOW_CORNER_PREFERENCE = 33
-            # DWMWCP_DONOTROUND = 1, DWMWCP_ROUND = 2
-            # Disable rounding when maximized/snapped to avoid edge gaps.
+            dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
             square_needed = self.isMaximized() or self.isFullScreen() or self._is_snapped_to_edge()
             corner_pref = ctypes.c_int(1 if square_needed else 2)
-            dwmapi.DwmSetWindowAttribute(
-                hwnd, 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref)
-            )
-
-            # DWMWA_BORDER_COLOR = 34, DWMWA_COLOR_NONE = 0xFFFFFFFE
-            # Remove bright system border around frameless window in max/snap.
+            dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref))
             border_none = ctypes.c_uint(0xFFFFFFFE)
-            dwmapi.DwmSetWindowAttribute(
-                hwnd, 34, ctypes.byref(border_none), ctypes.sizeof(border_none)
-            )
-
-            # Shadow + maximized/snap can produce outer gaps; disable shadow in that state.
+            dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border_none), ctypes.sizeof(border_none))
             if hasattr(self, "windowEffect"):
                 if square_needed:
                     self.windowEffect.removeShadowEffect(self.winId())
@@ -427,7 +389,6 @@ class MainWindow(FramelessWindow):
             pass
 
     def _is_snapped_to_edge(self) -> bool:
-        """Heuristic: detect Win11 snapped/docked window by screen-edge alignment."""
         try:
             handle = self.windowHandle()
             if not handle or not handle.screen():
@@ -435,7 +396,6 @@ class MainWindow(FramelessWindow):
             avail = handle.screen().availableGeometry()
             frame = self.frameGeometry()
             eps = 2
-
             full_height = abs(frame.top() - avail.top()) <= eps and abs(frame.bottom() - avail.bottom()) <= eps
             left_docked = abs(frame.left() - avail.left()) <= eps
             right_docked = abs(frame.right() - avail.right()) <= eps
@@ -445,45 +405,36 @@ class MainWindow(FramelessWindow):
             return False
 
     def _enforce_maximized_workarea_bounds(self) -> None:
-        """Compensate invisible resize frame to remove edge gaps in maximized state."""
         if sys.platform != "win32" or not self.isMaximized():
             return
         try:
             import ctypes
-
             handle = self.windowHandle()
             if not handle or not handle.screen():
                 return
             avail = handle.screen().availableGeometry()
             user32 = ctypes.windll.user32
-
             SM_CXSIZEFRAME = 32
             SM_CYSIZEFRAME = 33
             SM_CXPADDEDBORDER = 92
             frame_x = int(user32.GetSystemMetrics(SM_CXSIZEFRAME) + user32.GetSystemMetrics(SM_CXPADDEDBORDER))
             frame_y = int(user32.GetSystemMetrics(SM_CYSIZEFRAME) + user32.GetSystemMetrics(SM_CXPADDEDBORDER))
-
             SWP_NOZORDER = 0x0004
             SWP_NOACTIVATE = 0x0010
             user32.SetWindowPos(
-                int(self.winId()),
-                0,
-                int(avail.x() - frame_x),
-                int(avail.y() - frame_y),
-                int(avail.width() + frame_x * 2),
-                int(avail.height() + frame_y * 2),
+                int(self.winId()), 0,
+                int(avail.x() - frame_x), int(avail.y() - frame_y),
+                int(avail.width() + frame_x * 2), int(avail.height() + frame_y * 2),
                 SWP_NOZORDER | SWP_NOACTIVATE,
             )
         except Exception:
             pass
 
     def _enable_native_snap_styles(self) -> None:
-        """Force native resize/snap related window styles for frameless shell."""
         if sys.platform != "win32":
             return
         try:
             import ctypes
-
             GWL_STYLE = -16
             WS_THICKFRAME = 0x00040000
             WS_MAXIMIZEBOX = 0x00010000
@@ -494,7 +445,6 @@ class MainWindow(FramelessWindow):
             SWP_NOZORDER = 0x0004
             SWP_NOACTIVATE = 0x0010
             SWP_FRAMECHANGED = 0x0020
-
             hwnd = int(self.winId())
             user32 = ctypes.windll.user32
             style = user32.GetWindowLongW(hwnd, GWL_STYLE)
@@ -503,12 +453,7 @@ class MainWindow(FramelessWindow):
             if new_style != style:
                 user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
                 user32.SetWindowPos(
-                    hwnd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
+                    hwnd, 0, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                 )
             self._native_snap_styles_applied = True
@@ -557,23 +502,20 @@ class MainWindow(FramelessWindow):
         self._tab_bar.register_external_tab_bar(self.custom_title_bar.tabs_bar)
         layout.addWidget(self._tab_bar)
 
+        self._content_container = container
         self.setContentWidget(container)
         self._sync_nav_with_current_tab()
 
     def setContentWidget(self, widget: QWidget) -> None:
-        """Compose title bar and content like the working NoxIDE window."""
         if not hasattr(self, "main_layout"):
             self.main_layout = QVBoxLayout(self)
             self.main_layout.setContentsMargins(0, 0, 0, 0)
             self.main_layout.setSpacing(0)
-
             self.main_layout.addWidget(self.custom_title_bar)
-
             separator = QFrame(self)
             separator.setFixedHeight(1)
             separator.setStyleSheet("background-color: #404040;")
             self.main_layout.addWidget(separator)
-
             self.main_layout.addWidget(widget)
         else:
             old_widget = self.main_layout.itemAt(2).widget()
@@ -650,7 +592,6 @@ class MainWindow(FramelessWindow):
         url = self.get_current_url()
         if not url or url == "about:blank":
             return
-
         if self._bookmarks.is_bookmarked(url):
             self._bookmarks.remove(url)
             self._nav_bar.set_bookmarked(False)
@@ -669,18 +610,13 @@ class MainWindow(FramelessWindow):
             self._nav_bar.set_bookmarked(True)
 
     def _show_history(self) -> None:
-        from ui.dialogs.history_dialog import HistoryDialog
-
-        dlg = HistoryDialog(self._history, parent=self)
-        dlg.url_selected.connect(self.open_url)
-        dlg.exec()
+        self.open_new_tab("nox://history/")
 
     def _show_bookmarks(self) -> None:
-        from ui.dialogs.bookmarks_dialog import BookmarksDialog
+        self.open_new_tab("nox://bookmarks/")
 
-        dlg = BookmarksDialog(self._bookmarks, parent=self)
-        dlg.url_selected.connect(self.open_url)
-        dlg.exec()
+    def _show_downloads(self) -> None:
+        self.open_new_tab("nox://downloads/")
 
     def _about(self) -> None:
         QMessageBox.about(
@@ -690,12 +626,6 @@ class MainWindow(FramelessWindow):
             "<p>Modular browser on Python + PySide6 + Chromium</p>"
             "<p>Engine: QtWebEngine</p>",
         )
-
-    def _show_downloads(self) -> None:
-        from ui.downloads_dialog import DownloadsDialog
-
-        dlg = DownloadsDialog(self._downloads, parent=self)
-        dlg.exec()
 
     # ------------------------------------------------------------------
     # Qt events
@@ -723,6 +653,11 @@ class MainWindow(FramelessWindow):
         self._update_resize_grips()
         if sys.platform == "win32":
             self._dwm_update_timer.start(30)
+        if hasattr(self, "_tab_bar"):
+            if self.height() < 50:
+                self._tab_bar.setMaximumHeight(0)
+            else:
+                self._tab_bar.setMaximumHeight(16777215)
 
     def moveEvent(self, event) -> None:  # noqa: N802
         super().moveEvent(event)
@@ -737,7 +672,6 @@ class MainWindow(FramelessWindow):
             self._apply_windows_dwm_preferences()
 
     def nativeEvent(self, eventType, message):  # noqa: N802
-        """Windows hook: re-apply DWM preferences after style/state changes."""
         if sys.platform == "win32":
             try:
                 import ctypes
@@ -756,13 +690,10 @@ class MainWindow(FramelessWindow):
                         top_left = btn.mapToGlobal(QPoint(0, 0))
                         rect = QRect(top_left, btn.size())
                         if rect.contains(QCursor.pos()):
-                            # Keep Snap Assist hover, but let mouse click reach Qt button.
                             if QApplication.mouseButtons() == Qt.NoButton:
                                 return True, win32con.HTMAXBUTTON
                             return True, win32con.HTCLIENT
 
-                # When hover uses HTMAXBUTTON, click goes through NC path.
-                # Handle NC down/up explicitly so maximize works on single click.
                 if msg.message == win32con.WM_NCLBUTTONDOWN and int(msg.wParam) == win32con.HTMAXBUTTON:
                     self._nc_max_btn_pressed = True
                     return True, 0
@@ -775,6 +706,22 @@ class MainWindow(FramelessWindow):
 
                 if msg.message in (win32con.WM_CREATE, win32con.WM_ACTIVATE, win32con.WM_STYLECHANGED):
                     self._apply_windows_dwm_preferences()
+
+                if msg.message in (win32con.WM_NCMOUSEMOVE, 0x02A0):
+                    btn = getattr(self.custom_title_bar, "maximize_btn", None)
+                    if btn is not None:
+                        top_left = btn.mapToGlobal(QPoint(0, 0))
+                        rect = QRect(top_left, btn.size())
+                        hovered = rect.contains(QCursor.pos())
+                        btn.setProperty("hover", hovered)
+                        btn.style().unpolish(btn)
+                        btn.style().polish(btn)
+                if msg.message == win32con.WM_NCMOUSELEAVE:
+                    btn = getattr(self.custom_title_bar, "maximize_btn", None)
+                    if btn is not None:
+                        btn.setProperty("hover", False)
+                        btn.style().unpolish(btn)
+                        btn.style().polish(btn)
             except Exception:
                 pass
         return super().nativeEvent(eventType, message)
@@ -782,18 +729,14 @@ class MainWindow(FramelessWindow):
     def _update_resize_grips(self) -> None:
         if not hasattr(self, "_resize_grips"):
             return
-
         visible = not self.isMaximized() and not self.isFullScreen()
         for grip in self._resize_grips:
             grip.setVisible(visible)
-
         if not visible:
             return
-
         t = self._grip_thickness
         w = self.width()
         h = self.height()
-
         left, right, top, bottom, tl, tr, bl, br = self._resize_grips
         left.setGeometry(0, t, t, max(0, h - 2 * t))
         right.setGeometry(max(0, w - t), t, t, max(0, h - 2 * t))
@@ -803,10 +746,7 @@ class MainWindow(FramelessWindow):
         tr.setGeometry(max(0, w - t), 0, t, t)
         bl.setGeometry(0, max(0, h - t), t, t)
         br.setGeometry(max(0, w - t), max(0, h - t), t, t)
-
         for grip in self._resize_grips:
             grip.raise_()
-
-        # Keep title bar buttons above invisible resize grips.
         if hasattr(self, "custom_title_bar"):
             self.custom_title_bar.raise_()

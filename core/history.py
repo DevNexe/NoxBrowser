@@ -1,85 +1,106 @@
 """
-core/history.py — История навигации
+core/history.py — История навигации (SQLite)
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field, asdict
+import os
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+
+_SKIP_URLS = {
+    "about:blank", "about:newtab", "", "nox://newtab/", "nox://newtab",
+    "nox://history/", "nox://history", "nox://bookmarks/", "nox://bookmarks",
+    "nox://downloads/", "nox://downloads",
+}
 
 
 @dataclass
 class HistoryEntry:
     url: str
     title: str
-    visited_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    visited_at: str
 
-    def to_dict(self) -> dict:
-        return asdict(self)
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "HistoryEntry":
-        return cls(**data)
+def _db_path() -> Path:
+    return Path(os.environ.get("APPDATA", Path.home())) / "NoxBrowser" / "nox.db"
 
 
 class HistoryManager:
     MAX_ENTRIES: int = 10_000
 
-    def __init__(self, storage_dir: str | None = None) -> None:
-        self._entries: list[HistoryEntry] = []
-        self._storage_path = self._resolve_path(storage_dir)
-        self._load()
+    def __init__(self) -> None:
+        self._path = _db_path()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._con = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._con.row_factory = sqlite3.Row
+        self._migrate()
+
+    def _migrate(self) -> None:
+        self._con.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                url        TEXT NOT NULL,
+                title      TEXT NOT NULL DEFAULT '',
+                visited_at TEXT NOT NULL
+            )
+        """)
+        self._con.execute("CREATE INDEX IF NOT EXISTS idx_history_visited ON history(visited_at)")
+        self._con.commit()
 
     def add(self, url: str, title: str = "") -> None:
-        if not url or url in ("about:blank", ""):
+        url = (url or "").strip()
+        if not url:
             return
-        self._entries.append(HistoryEntry(url=url, title=title or url))
-        if len(self._entries) > self.MAX_ENTRIES:
-            self._entries = self._entries[-self.MAX_ENTRIES:]
-        self._save()
+        if url in _SKIP_URLS:
+            return
+        if url.startswith("data:"):
+            return
+        if url.startswith("nox://"):
+            return
+        self._con.execute(
+            "INSERT INTO history (url, title, visited_at) VALUES (?, ?, ?)",
+            (url, title or url, datetime.now().isoformat()),
+        )
+        self._con.commit()
+        self._trim()
 
     def search(self, query: str, limit: int = 50) -> list[HistoryEntry]:
-        q = query.lower()
-        return [e for e in reversed(self._entries)
-                if q in e.url.lower() or q in e.title.lower()][:limit]
+        q = f"%{query.lower()}%"
+        rows = self._con.execute(
+            "SELECT url, title, visited_at FROM history "
+            "WHERE lower(url) LIKE ? OR lower(title) LIKE ? "
+            "ORDER BY visited_at DESC LIMIT ?",
+            (q, q, limit),
+        ).fetchall()
+        return [HistoryEntry(**dict(r)) for r in rows]
 
     def get_recent(self, limit: int = 100) -> list[HistoryEntry]:
-        return list(reversed(self._entries[-limit:]))
+        rows = self._con.execute(
+            "SELECT url, title, visited_at FROM history ORDER BY visited_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [HistoryEntry(**dict(r)) for r in rows]
+
+    def delete_by_url(self, url: str) -> None:
+        self._con.execute("DELETE FROM history WHERE url = ?", (url,))
+        self._con.commit()
 
     def clear(self) -> None:
-        self._entries.clear()
-        self._save()
-
-    def __iter__(self) -> Iterator[HistoryEntry]:
-        return iter(reversed(self._entries))
+        self._con.execute("DELETE FROM history")
+        self._con.commit()
 
     def __len__(self) -> int:
-        return len(self._entries)
+        return self._con.execute("SELECT COUNT(*) FROM history").fetchone()[0]
 
-    def _load(self) -> None:
-        if not self._storage_path.exists():
-            return
-        try:
-            data = json.loads(self._storage_path.read_text(encoding="utf-8"))
-            self._entries = [HistoryEntry.from_dict(e) for e in data]
-        except Exception:
-            self._entries = []
-
-    def _save(self) -> None:
-        try:
-            self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-            self._storage_path.write_text(
-                json.dumps([e.to_dict() for e in self._entries], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
-
-    @staticmethod
-    def _resolve_path(storage_dir: str | None) -> Path:
-        if storage_dir:
-            return Path(storage_dir) / "history.json"
-        return Path.home() / ".nox_browser" / "history.json"
+    def _trim(self) -> None:
+        count = len(self)
+        if count > self.MAX_ENTRIES:
+            self._con.execute("""
+                DELETE FROM history WHERE id IN (
+                    SELECT id FROM history ORDER BY visited_at ASC LIMIT ?
+                )
+            """, (count - self.MAX_ENTRIES,))
+            self._con.commit()

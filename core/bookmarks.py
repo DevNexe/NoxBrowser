@@ -1,88 +1,78 @@
 """
-core/bookmarks.py — Менеджер закладок
+core/bookmarks.py — Менеджер закладок (SQLite)
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, asdict, field
+import os
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 
 @dataclass
 class Bookmark:
     url: str
     title: str
-    folder: str = "Без папки"
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    folder: str
+    created_at: str
 
-    def to_dict(self) -> dict:
-        return asdict(self)
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "Bookmark":
-        return cls(**data)
+def _db_path() -> Path:
+    return Path(os.environ.get("APPDATA", Path.home())) / "NoxBrowser" / "nox.db"
 
 
 class BookmarkManager:
-    def __init__(self, storage_dir: str | None = None) -> None:
-        self._bookmarks: list[Bookmark] = []
-        self._storage_path = self._resolve_path(storage_dir)
-        self._load()
+    def __init__(self) -> None:
+        self._path = _db_path()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._con = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._con.row_factory = sqlite3.Row
+        self._migrate()
+
+    def _migrate(self) -> None:
+        self._con.execute("""
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                url        TEXT NOT NULL UNIQUE,
+                title      TEXT NOT NULL DEFAULT '',
+                folder     TEXT NOT NULL DEFAULT 'Без папки',
+                created_at TEXT NOT NULL
+            )
+        """)
+        self._con.commit()
 
     def add(self, url: str, title: str, folder: str = "Без папки") -> Bookmark:
-        bm = Bookmark(url=url, title=title, folder=folder)
-        self._bookmarks.append(bm)
-        self._save()
-        return bm
+        self._con.execute(
+            "INSERT OR REPLACE INTO bookmarks (url, title, folder, created_at) VALUES (?, ?, ?, ?)",
+            (url, title, folder, datetime.now().isoformat()),
+        )
+        self._con.commit()
+        return Bookmark(url=url, title=title, folder=folder, created_at=datetime.now().isoformat())
 
     def remove(self, url: str) -> bool:
-        before = len(self._bookmarks)
-        self._bookmarks = [b for b in self._bookmarks if b.url != url]
-        if len(self._bookmarks) < before:
-            self._save()
-            return True
-        return False
+        cur = self._con.execute("DELETE FROM bookmarks WHERE url = ?", (url,))
+        self._con.commit()
+        return cur.rowcount > 0
 
     def is_bookmarked(self, url: str) -> bool:
-        return any(b.url == url for b in self._bookmarks)
+        row = self._con.execute("SELECT 1 FROM bookmarks WHERE url = ?", (url,)).fetchone()
+        return row is not None
 
     def get_all(self) -> list[Bookmark]:
-        return list(self._bookmarks)
+        rows = self._con.execute(
+            "SELECT url, title, folder, created_at FROM bookmarks ORDER BY created_at DESC"
+        ).fetchall()
+        return [Bookmark(**dict(r)) for r in rows]
 
     def search(self, query: str) -> list[Bookmark]:
-        q = query.lower()
-        return [b for b in self._bookmarks if q in b.url.lower() or q in b.title.lower()]
-
-    def __iter__(self) -> Iterator[Bookmark]:
-        return iter(self._bookmarks)
+        q = f"%{query.lower()}%"
+        rows = self._con.execute(
+            "SELECT url, title, folder, created_at FROM bookmarks WHERE lower(url) LIKE ? OR lower(title) LIKE ? ORDER BY created_at DESC",
+            (q, q),
+        ).fetchall()
+        return [Bookmark(**dict(r)) for r in rows]
 
     def __len__(self) -> int:
-        return len(self._bookmarks)
-
-    def _load(self) -> None:
-        if not self._storage_path.exists():
-            return
-        try:
-            data = json.loads(self._storage_path.read_text(encoding="utf-8"))
-            self._bookmarks = [Bookmark.from_dict(b) for b in data]
-        except Exception:
-            pass
-
-    def _save(self) -> None:
-        try:
-            self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-            self._storage_path.write_text(
-                json.dumps([b.to_dict() for b in self._bookmarks], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
-
-    @staticmethod
-    def _resolve_path(storage_dir: str | None) -> Path:
-        if storage_dir:
-            return Path(storage_dir) / "bookmarks.json"
-        return Path.home() / ".nox_browser" / "bookmarks.json"
+        return self._con.execute("SELECT COUNT(*) FROM bookmarks").fetchone()[0]
